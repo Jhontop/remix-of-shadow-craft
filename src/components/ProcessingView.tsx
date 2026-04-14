@@ -51,16 +51,6 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
   };
 
   return (
-    item.status === "done" && item.results ? item.results : []
-  );
-
-  const handleDownloadAll = () => {
-    allResults.forEach((r, i) => {
-      setTimeout(() => downloadBlob(r.blob, r.filename), i * 300);
-    });
-  };
-
-  return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
