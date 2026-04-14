@@ -40,8 +40,17 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
   const completed = items.filter((i) => i.status === "done").length;
   const total = items.length;
 
-  return (
   const allResults = items.flatMap((item) =>
+    item.status === "done" && item.results ? item.results : []
+  );
+
+  const handleDownloadAll = () => {
+    allResults.forEach((r, i) => {
+      setTimeout(() => downloadBlob(r.blob, r.filename), i * 300);
+    });
+  };
+
+  return (
     item.status === "done" && item.results ? item.results : []
   );
 
