@@ -1,4 +1,4 @@
-import { CheckCircle2, Loader2, Clock, Download, Eye, AlertCircle } from "lucide-react";
+import { CheckCircle2, Loader2, Clock, Download, AlertCircle, Play } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { downloadBlob } from "@/lib/ffmpeg-processor";
 import { Progress } from "@/components/ui/progress";
@@ -17,16 +17,17 @@ export interface ProcessingItem {
 
 interface ProcessingViewProps {
   items: ProcessingItem[];
+  isProcessing?: boolean;
 }
 
 const statusConfig = {
   queued: { icon: Clock, label: "Na fila", color: "text-muted-foreground" },
   processing: { icon: Loader2, label: "Processando", color: "text-primary" },
   done: { icon: CheckCircle2, label: "Concluído", color: "text-emerald-400" },
-  error: { icon: Clock, label: "Erro", color: "text-destructive" },
+  error: { icon: AlertCircle, label: "Erro", color: "text-destructive" },
 };
 
-const ProcessingView = ({ items }: ProcessingViewProps) => {
+const ProcessingView = ({ items, isProcessing }: ProcessingViewProps) => {
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
@@ -38,15 +39,14 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
   }
 
   const completed = items.filter((i) => i.status === "done").length;
+  const errored = items.filter((i) => i.status === "error").length;
   const total = items.length;
 
-  const allResults = items.flatMap((item) =>
-    item.status === "done" && item.results ? item.results : []
-  );
-
-  const handleDownloadAll = () => {
-    allResults.forEach((r, i) => {
-      setTimeout(() => downloadBlob(r.blob, r.filename), i * 300);
+  const downloadAll = () => {
+    items.forEach((item) => {
+      if (item.status === "done" && item.results) {
+        item.results.forEach((r) => downloadBlob(r.blob, r.filename));
+      }
     });
   };
 
@@ -57,27 +57,32 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
           <h3 className="text-lg font-semibold text-foreground">Processamento</h3>
           <p className="text-sm text-muted-foreground">
             {completed}/{total} concluído{completed !== 1 ? "s" : ""}
+            {errored > 0 && ` • ${errored} erro${errored !== 1 ? "s" : ""}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {allResults.length > 1 && (
+          {isProcessing && (
+            <Badge variant="outline" className="border-primary/30 text-primary animate-pulse">
+              <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Processando
+            </Badge>
+          )}
+          <Badge variant="outline" className="border-border text-muted-foreground font-mono">
+            {total > 0 ? Math.round((completed / total) * 100) : 0}%
+          </Badge>
+          {completed > 0 && !isProcessing && (
             <Button
               size="sm"
               variant="outline"
-              className="h-8 gap-1.5 text-xs border-border text-foreground"
-              onClick={handleDownloadAll}
+              className="gap-1.5 border-border text-muted-foreground hover:text-foreground"
+              onClick={downloadAll}
             >
-              <Download className="w-3.5 h-3.5" />
-              Baixar Todos ({allResults.length})
+              <Download className="w-3.5 h-3.5" /> Baixar Todos
             </Button>
           )}
-          <Badge variant="outline" className="border-border text-muted-foreground font-mono">
-            {Math.round((completed / total) * 100)}%
-          </Badge>
         </div>
       </div>
 
-      <Progress value={(completed / total) * 100} className="h-1.5 bg-surface" />
+      <Progress value={total > 0 ? (completed / total) * 100 : 0} className="h-1.5 bg-surface" />
 
       <div className="space-y-2">
         {items.map((item) => {
@@ -98,12 +103,24 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
                       <span className={`text-xs ${config.color}`}>{config.label}</span>
                       {item.status === "processing" && (
                         <>
-                          <span className="text-xs text-muted-foreground font-mono">{item.progress}%</span>
-                          {item.message && <span className="text-xs text-muted-foreground">— {item.message}</span>}
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {item.progress}%
+                          </span>
+                          {item.message && (
+                            <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                              — {item.message}
+                            </span>
+                          )}
                         </>
                       )}
                       {item.status === "error" && item.message && (
                         <span className="text-xs text-destructive">{item.message}</span>
+                      )}
+                      {item.status === "done" && item.results && (
+                        <span className="text-xs text-emerald-400">
+                          {item.results.length} variação{item.results.length !== 1 ? "ões" : ""}{" "}
+                          gerada{item.results.length !== 1 ? "s" : ""}
+                        </span>
                       )}
                     </div>
                     {item.status === "processing" && (
@@ -111,8 +128,11 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
                     )}
                   </div>
                   {item.status === "done" && item.results && (
-                    <div className="flex gap-1.5 flex-wrap">
-                      <Badge variant="secondary" className="text-xs bg-card border-0 text-secondary-foreground">
+                    <div className="flex gap-1.5 flex-wrap justify-end">
+                      <Badge
+                        variant="secondary"
+                        className="text-xs bg-card border-0 text-secondary-foreground"
+                      >
                         {item.results.length}x
                       </Badge>
                       {item.results.map((r, i) => (

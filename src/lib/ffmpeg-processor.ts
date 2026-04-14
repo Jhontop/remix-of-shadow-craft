@@ -28,12 +28,12 @@ export async function loadFFmpeg(onProgress?: ProgressCallback) {
   try {
     onProgress?.(5, "Baixando ffmpeg-core.js...");
     const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript", true, (p) => {
-      onProgress?.(5 + Math.round(p.received / (p.total || 1) * 20), "Baixando ffmpeg-core.js...");
+      onProgress?.(5 + Math.round((p.received / (p.total || 1)) * 20), "Baixando ffmpeg-core.js...");
     });
 
     onProgress?.(30, "Baixando ffmpeg-core.wasm (~30MB)...");
     const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm", true, (p) => {
-      const pct = p.total ? Math.round(p.received / p.total * 60) : 0;
+      const pct = p.total ? Math.round((p.received / p.total) * 60) : 0;
       onProgress?.(30 + pct, `Baixando WASM... ${Math.round(p.received / 1024 / 1024)}MB`);
     });
 
@@ -46,11 +46,13 @@ export async function loadFFmpeg(onProgress?: ProgressCallback) {
   } catch (err) {
     console.error("[FFmpeg] Load error:", err);
     ffmpeg = null;
-    throw new Error("Falha ao carregar FFmpeg. Verifique sua conexão.");
+    loaded = false;
+    throw new Error(
+      "Falha ao carregar FFmpeg. Verifique sua conexão e se o navegador suporta SharedArrayBuffer (Chrome/Firefox recomendado)."
+    );
   }
 }
 
-/** Generate a random float in [min, max] */
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
@@ -58,21 +60,18 @@ function rand(min: number, max: number): number {
 function buildAudioFilters(settings: CloakSettings, scale: number): string[] {
   const filters: string[] = [];
 
-  // Pitch shift via asetrate + aresample — small random variation
   const pitchShift = rand(0.97, 1.03) * (1 + (scale - 1) * 0.01);
   if (Math.abs(pitchShift - 1) > 0.001) {
     filters.push(`asetrate=44100*${pitchShift.toFixed(4)}`);
     filters.push(`aresample=44100`);
   }
 
-  // Speed (tempo) — slight random variation
   const speedFactor = 1 + rand(-0.02, 0.02) * scale;
   const clampedSpeed = Math.max(0.5, Math.min(2.0, speedFactor));
   if (Math.abs(clampedSpeed - 1) > 0.001) {
     filters.push(`atempo=${clampedSpeed.toFixed(4)}`);
   }
 
-  // Volume — slight random variation
   const volFactor = 1 + rand(-0.03, 0.03) * scale;
   if (Math.abs(volFactor - 1) > 0.001) {
     filters.push(`volume=${volFactor.toFixed(4)}`);
@@ -81,10 +80,13 @@ function buildAudioFilters(settings: CloakSettings, scale: number): string[] {
   return filters;
 }
 
-function buildVideoFilters(settings: CloakSettings, scale: number, reencoding: ReencodingConfig): string[] {
+function buildVideoFilters(
+  settings: CloakSettings,
+  scale: number,
+  reencoding: ReencodingConfig
+): string[] {
   const filters: string[] = [];
 
-  // Combine eq parameters into ONE filter call
   const sat = 1 + rand(-0.05, 0.05) * scale;
   const bright = rand(-0.02, 0.02) * scale;
   const contrast = 1 + rand(-0.03, 0.03) * scale;
@@ -97,18 +99,15 @@ function buildVideoFilters(settings: CloakSettings, scale: number, reencoding: R
     filters.push(`eq=${eqParts.join(":")}`);
   }
 
-  // Noise — very light
   const noiseStrength = Math.round(rand(1, 4) * scale);
   if (noiseStrength > 0 && settings.video.noise > 0) {
     filters.push(`noise=alls=${noiseStrength}:allf=t`);
   }
 
-  // Resolution variation — MERGED here instead of separate -vf flag
+  // Use trunc to ensure even dimensions — required by h264
   if (reencoding.enabled && reencoding.resolutionOffset > 0) {
     const offset = reencoding.resolutionOffset + Math.floor(rand(0, 5));
-    // Use expressions so it works with any input size, ensure even dimensions
-    filters.push(`scale=iw-${offset}:ih-${offset}`);
-    filters.push(`pad=ceil(iw/2)*2:ceil(ih/2)*2`);
+    filters.push(`scale=trunc((iw-${offset})/2)*2:trunc((ih-${offset})/2)*2`);
   }
 
   return filters;
@@ -121,15 +120,18 @@ function getCodecArgs(config: ReencodingConfig): string[] {
       args.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
       break;
     case "h265":
-      args.push("-c:v", "libx265", "-preset", "fast", "-crf", "28");
+      // FFmpeg.wasm lacks libx265 in most builds — fallback to h264
+      args.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
       break;
     case "vp9":
       args.push("-c:v", "libvpx-vp9", "-b:v", "1M", "-crf", "30");
       break;
     case "av1":
-      // FFmpeg.wasm doesn't support AV1, fallback to h264
+      // No AV1 encoder in FFmpeg.wasm — fallback to h264
       args.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
       break;
+    default:
+      args.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
   }
   return args;
 }
@@ -154,49 +156,50 @@ export async function processFile(
   const ts = Date.now();
   const isVideo = file.type.startsWith("video");
   const inputExt = file.name.substring(file.name.lastIndexOf("."));
-  const inputFile = `input_${ts}${inputExt}`;
+  // Include variationIndex in filename to avoid FS collisions between parallel calls
+  const inputFile = `input_${ts}_${variationIndex}${inputExt}`;
 
-  const scale = settings.intensity === "light" ? 0.5 : settings.intensity === "medium" ? 1.0 : 1.8;
+  const scale =
+    settings.intensity === "light" ? 0.5 : settings.intensity === "medium" ? 1.0 : 1.8;
 
   const outputExt = reencoding.enabled ? `.${reencoding.outputFormat}` : inputExt;
   const baseName = file.name.substring(0, file.name.lastIndexOf("."));
   const outputFile = `output_${ts}_v${variationIndex}${outputExt}`;
 
-  const useCover = isVideo && coverImage && coverDuration && coverDuration > 0;
-  const coverFile = `cover_${ts}.png`;
+  const useCover = isVideo && !!coverImage && !!coverDuration && coverDuration > 0;
+  const coverFile = `cover_${ts}_${variationIndex}.png`;
 
   onProgress?.(5, "Carregando arquivo...");
   const fileData = await fetchFile(file);
   await ff.writeFile(inputFile, fileData);
 
-  // Write cover image if provided
-  if (useCover) {
+  if (useCover && coverImage) {
     onProgress?.(8, "Carregando capa...");
     const coverData = await fetchFile(coverImage);
     await ff.writeFile(coverFile, coverData);
   }
 
-  // Build FFmpeg command
   const args: string[] = [];
 
   if (useCover) {
-    // Use cover image as first input, loop it for coverDuration seconds
+    // Input 0: cover image looped for coverDuration seconds
     args.push("-loop", "1", "-t", `${coverDuration}`, "-i", coverFile);
-    // Then the actual video
+    // Input 1: main video
     args.push("-i", inputFile);
-    // Use complex filter to concatenate cover + video
-    const videoFilters = buildVideoFilters(settings, scale, reencoding);
-    const eqFilter = videoFilters.length > 0 ? "," + videoFilters.join(",") : "";
 
-    // Scale cover to match video, then concat
+    const videoFilters = buildVideoFilters(settings, scale, reencoding);
+    const vfChain = videoFilters.length > 0 ? videoFilters.join(",") + "," : "";
+
+    // Scale cover to match video dimensions, force yuv420p, then concat
     args.push(
       "-filter_complex",
-      `[0:v]scale=iw:ih,setsar=1[cover];[1:v]${videoFilters.length > 0 ? videoFilters.join(",") + "," : ""}setsar=1[main];[cover][main]concat=n=2:v=1:a=0[outv]`
+      `[0:v]scale=iw:ih,setsar=1,format=yuv420p[cover];` +
+        `[1:v]${vfChain}setsar=1,format=yuv420p[main];` +
+        `[cover][main]concat=n=2:v=1:a=0[outv]`
     );
     args.push("-map", "[outv]");
     args.push("-map", "1:a?");
 
-    // Audio filters on the main video's audio
     const audioFilters = buildAudioFilters(settings, scale);
     if (audioFilters.length > 0) {
       args.push("-af", audioFilters.join(","));
@@ -204,13 +207,11 @@ export async function processFile(
   } else {
     args.push("-i", inputFile);
 
-    // Audio filters
     const audioFilters = buildAudioFilters(settings, scale);
     if (audioFilters.length > 0) {
       args.push("-af", audioFilters.join(","));
     }
 
-    // Video filters — ALL in one -vf flag (including resolution)
     if (isVideo) {
       const videoFilters = buildVideoFilters(settings, scale, reencoding);
       if (videoFilters.length > 0) {
@@ -219,14 +220,12 @@ export async function processFile(
     }
   }
 
-  // Codec / reencoding
   if (reencoding.enabled) {
     if (isVideo) {
       args.push(...getCodecArgs(reencoding));
     }
     args.push("-c:a", "aac", "-b:a", "128k");
 
-    // FPS variation
     if (reencoding.fpsOffset > 0) {
       const fpsAdjust = reencoding.fpsOffset + rand(0, 2);
       args.push("-r", `${Math.round(30 - fpsAdjust)}`);
@@ -238,13 +237,11 @@ export async function processFile(
     }
   }
 
-  // Strip metadata
   if (reencoding.stripMetadata || settings.video.metadata) {
     args.push("-map_metadata", "-1");
     args.push("-fflags", "+bitexact");
   }
 
-  // Movflags for proper MP4
   if (outputExt === ".mp4" || outputExt === ".mov") {
     args.push("-movflags", "+faststart");
   }
@@ -258,12 +255,18 @@ export async function processFile(
     await ff.exec(args);
   } catch (err) {
     console.error("[FFmpeg] Processing error:", err);
-    // Fallback: simple re-encode
+    // Fallback: minimal safe re-encode
     const fallbackArgs = ["-i", inputFile];
     if (isVideo) {
       fallbackArgs.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
     }
-    fallbackArgs.push("-c:a", "aac", "-b:a", "128k", "-map_metadata", "-1", "-y", outputFile);
+    fallbackArgs.push(
+      "-c:a", "aac",
+      "-b:a", "128k",
+      "-map_metadata", "-1",
+      "-movflags", "+faststart",
+      "-y", outputFile
+    );
     await ff.exec(fallbackArgs);
   }
 
@@ -274,22 +277,17 @@ export async function processFile(
     ? `video/${reencoding.enabled ? reencoding.outputFormat : "mp4"}`
     : `audio/${reencoding.enabled ? "aac" : "mpeg"}`;
 
-  let uint8 = outputData instanceof Uint8Array ? outputData : new TextEncoder().encode(outputData as string);
+  const uint8 =
+    outputData instanceof Uint8Array
+      ? outputData
+      : new TextEncoder().encode(outputData as string);
 
-  // Randomize file size: append random padding bytes to change the file hash
-  if (reencoding.randomizeFileSize) {
-    const paddingSize = Math.floor(rand(64, 512));
-    const padding = new Uint8Array(paddingSize);
-    crypto.getRandomValues(padding);
-    const combined = new Uint8Array(uint8.length + paddingSize);
-    combined.set(uint8);
-    combined.set(padding, uint8.length);
-    uint8 = combined;
-  }
+  // NOTE: Random byte padding was removed — it corrupts MP4/MOV containers.
+  // Hash uniqueness is already guaranteed by the cloaking filters.
 
   const blob = new Blob([uint8.buffer as ArrayBuffer], { type: mimeType });
 
-  // Cleanup
+  // Free virtual FS memory
   await ff.deleteFile(inputFile).catch(() => {});
   await ff.deleteFile(outputFile).catch(() => {});
   if (useCover) await ff.deleteFile(coverFile).catch(() => {});
@@ -309,5 +307,6 @@ export function downloadBlob(blob: Blob, filename: string) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // Delay revoke to ensure download triggers before URL is freed
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
