@@ -129,7 +129,9 @@ export async function processFile(
   settings: CloakSettings,
   reencoding: ReencodingConfig,
   variationIndex: number,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  coverImage?: File,
+  coverDuration?: number
 ): Promise<ProcessResult> {
   const ff = await loadFFmpeg(onProgress);
 
@@ -144,24 +146,60 @@ export async function processFile(
   const baseName = file.name.substring(0, file.name.lastIndexOf("."));
   const outputFile = `output_${ts}_v${variationIndex}${outputExt}`;
 
+  const useCover = isVideo && coverImage && coverDuration && coverDuration > 0;
+  const coverFile = `cover_${ts}.png`;
+
   onProgress?.(5, "Carregando arquivo...");
   const fileData = await fetchFile(file);
   await ff.writeFile(inputFile, fileData);
 
-  // Build FFmpeg command
-  const args: string[] = ["-i", inputFile];
-
-  // Audio filters
-  const audioFilters = buildAudioFilters(settings, scale);
-  if (audioFilters.length > 0) {
-    args.push("-af", audioFilters.join(","));
+  // Write cover image if provided
+  if (useCover) {
+    onProgress?.(8, "Carregando capa...");
+    const coverData = await fetchFile(coverImage);
+    await ff.writeFile(coverFile, coverData);
   }
 
-  // Video filters — ALL in one -vf flag (including resolution)
-  if (isVideo) {
+  // Build FFmpeg command
+  const args: string[] = [];
+
+  if (useCover) {
+    // Use cover image as first input, loop it for coverDuration seconds
+    args.push("-loop", "1", "-t", `${coverDuration}`, "-i", coverFile);
+    // Then the actual video
+    args.push("-i", inputFile);
+    // Use complex filter to concatenate cover + video
     const videoFilters = buildVideoFilters(settings, scale, reencoding);
-    if (videoFilters.length > 0) {
-      args.push("-vf", videoFilters.join(","));
+    const eqFilter = videoFilters.length > 0 ? "," + videoFilters.join(",") : "";
+
+    // Scale cover to match video, then concat
+    args.push(
+      "-filter_complex",
+      `[0:v]scale=iw:ih,setsar=1[cover];[1:v]${videoFilters.length > 0 ? videoFilters.join(",") + "," : ""}setsar=1[main];[cover][main]concat=n=2:v=1:a=0[outv]`
+    );
+    args.push("-map", "[outv]");
+    args.push("-map", "1:a?");
+
+    // Audio filters on the main video's audio
+    const audioFilters = buildAudioFilters(settings, scale);
+    if (audioFilters.length > 0) {
+      args.push("-af", audioFilters.join(","));
+    }
+  } else {
+    args.push("-i", inputFile);
+
+    // Audio filters
+    const audioFilters = buildAudioFilters(settings, scale);
+    if (audioFilters.length > 0) {
+      args.push("-af", audioFilters.join(","));
+    }
+
+    // Video filters — ALL in one -vf flag (including resolution)
+    if (isVideo) {
+      const videoFilters = buildVideoFilters(settings, scale, reencoding);
+      if (videoFilters.length > 0) {
+        args.push("-vf", videoFilters.join(","));
+      }
     }
   }
 
@@ -177,14 +215,14 @@ export async function processFile(
       const fpsAdjust = reencoding.fpsOffset + rand(0, 2);
       args.push("-r", `${Math.round(30 - fpsAdjust)}`);
     }
-  } else {
-    // If no filters applied, copy streams
+  } else if (!useCover) {
+    const audioFilters = buildAudioFilters(settings, scale);
     if (audioFilters.length === 0 && (!isVideo || settings.video.noise === 0)) {
       args.push("-c", "copy");
     }
   }
 
-  // Strip metadata — creates unique file hash
+  // Strip metadata
   if (reencoding.stripMetadata || settings.video.metadata) {
     args.push("-map_metadata", "-1");
     args.push("-fflags", "+bitexact");
@@ -238,6 +276,7 @@ export async function processFile(
   // Cleanup
   await ff.deleteFile(inputFile).catch(() => {});
   await ff.deleteFile(outputFile).catch(() => {});
+  if (useCover) await ff.deleteFile(coverFile).catch(() => {});
 
   const resultFilename = `${baseName}_cloaked_v${variationIndex + 1}${outputExt}`;
 

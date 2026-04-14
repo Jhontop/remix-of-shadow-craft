@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import Sidebar from "@/components/Sidebar";
 import UploadZone, { type UploadedFile } from "@/components/UploadZone";
 import CloakingSettings, { type CloakSettings } from "@/components/CloakingSettings";
+import CoverUpload, { type CoverImage } from "@/components/CoverUpload";
 import ReencodingSettings, { type ReencodingConfig } from "@/components/ReencodingSettings";
 import ProcessingView, { type ProcessingItem } from "@/components/ProcessingView";
 import StatsBar from "@/components/StatsBar";
@@ -33,6 +34,9 @@ const Index = () => {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [settings, setSettings] = useState<CloakSettings>(defaultSettings);
   const [processing, setProcessing] = useState<ProcessingItem[]>([]);
+  const [cover, setCover] = useState<CoverImage | null>(null);
+  const [coverEnabled, setCoverEnabled] = useState(false);
+  const [coverDuration, setCoverDuration] = useState(2);
   const [reencoding, setReencoding] = useState<ReencodingConfig>(defaultReencoding);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -50,7 +54,6 @@ const Index = () => {
     setProcessing(items);
     setActiveTab("processing");
 
-    // Load FFmpeg first
     try {
       await loadFFmpeg((progress, message) => {
         if (progress < 100) {
@@ -67,7 +70,8 @@ const Index = () => {
       return;
     }
 
-    // Process each file sequentially
+    const coverFile = coverEnabled && cover ? cover.file : undefined;
+
     for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
       const file = files[fileIdx];
       const results: Array<{ blob: Blob; filename: string }> = [];
@@ -94,7 +98,9 @@ const Index = () => {
                     : item
                 )
               );
-            }
+            },
+            coverFile,
+            coverDuration
           );
           results.push({ blob: result.blob, filename: result.filename });
         }
@@ -117,7 +123,7 @@ const Index = () => {
     }
 
     setIsProcessing(false);
-  }, [files, settings, reencoding, isProcessing]);
+  }, [files, settings, reencoding, isProcessing, cover, coverEnabled, coverDuration]);
 
   const showSettingsPanel = activeTab === "upload" || activeTab === "processing";
 
@@ -175,6 +181,14 @@ const Index = () => {
                   <h2 className="text-lg font-semibold text-foreground">Configurações</h2>
                 </div>
                 <CloakingSettings settings={settings} onChange={setSettings} />
+                <CoverUpload
+                  cover={cover}
+                  onCoverChange={setCover}
+                  enabled={coverEnabled}
+                  onEnabledChange={setCoverEnabled}
+                  duration={coverDuration}
+                  onDurationChange={setCoverDuration}
+                />
                 <ReencodingSettings config={reencoding} onChange={setReencoding} />
               </div>
             )}
