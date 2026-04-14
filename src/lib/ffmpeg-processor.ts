@@ -34,105 +34,85 @@ export async function loadFFmpeg(onProgress?: ProgressCallback) {
   return ffmpeg;
 }
 
-function buildAudioFilters(audio: CloakSettings["audio"]): string[] {
+/** Generate a random float in [min, max] */
+function rand(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+function buildAudioFilters(settings: CloakSettings, scale: number): string[] {
   const filters: string[] = [];
 
-  // Pitch shift via asetrate + aresample
-  if (audio.pitch > 0) {
-    const pitchFactor = 1 + (audio.pitch - 50) * 0.004; // ±20% range mapped from 0-100
-    filters.push(`asetrate=44100*${pitchFactor.toFixed(4)}`);
+  // Pitch shift via asetrate + aresample — small random variation
+  const pitchShift = rand(0.97, 1.03) * (1 + (scale - 1) * 0.01);
+  if (Math.abs(pitchShift - 1) > 0.001) {
+    filters.push(`asetrate=44100*${pitchShift.toFixed(4)}`);
     filters.push(`aresample=44100`);
   }
 
-  // Speed (tempo)
-  if (audio.speed > 0) {
-    const speedFactor = 1 + (audio.speed - 50) * 0.003; // ±15%
-    const clamped = Math.max(0.5, Math.min(2.0, speedFactor));
-    filters.push(`atempo=${clamped.toFixed(4)}`);
+  // Speed (tempo) — slight random variation
+  const speedFactor = 1 + rand(-0.02, 0.02) * scale;
+  const clampedSpeed = Math.max(0.5, Math.min(2.0, speedFactor));
+  if (Math.abs(clampedSpeed - 1) > 0.001) {
+    filters.push(`atempo=${clampedSpeed.toFixed(4)}`);
   }
 
-  // Volume
-  if (audio.volume > 0) {
-    const volFactor = 1 + (audio.volume - 50) * 0.005; // ±25%
+  // Volume — slight random variation
+  const volFactor = 1 + rand(-0.03, 0.03) * scale;
+  if (Math.abs(volFactor - 1) > 0.001) {
     filters.push(`volume=${volFactor.toFixed(4)}`);
   }
 
-  // Stereo panning
-  if (audio.stereo > 0) {
-    const pan = (audio.stereo - 50) * 0.01; // -0.5 to 0.5
-    const left = (1 - pan).toFixed(3);
-    const right = (1 + pan).toFixed(3);
-    filters.push(`pan=stereo|c0=${left}*c0|c1=${right}*c1`);
-  }
-
   return filters;
 }
 
-function buildVideoFilters(video: CloakSettings["video"]): string[] {
+function buildVideoFilters(settings: CloakSettings, scale: number, reencoding: ReencodingConfig): string[] {
   const filters: string[] = [];
 
-  // Color / Saturation
-  if (video.color > 0) {
-    const sat = 1 + (video.color - 50) * 0.006;
-    filters.push(`eq=saturation=${sat.toFixed(3)}`);
+  // Combine eq parameters into ONE filter call
+  const sat = 1 + rand(-0.05, 0.05) * scale;
+  const bright = rand(-0.02, 0.02) * scale;
+  const contrast = 1 + rand(-0.03, 0.03) * scale;
+
+  const eqParts: string[] = [];
+  if (Math.abs(sat - 1) > 0.001) eqParts.push(`saturation=${sat.toFixed(3)}`);
+  if (Math.abs(bright) > 0.001) eqParts.push(`brightness=${bright.toFixed(3)}`);
+  if (Math.abs(contrast - 1) > 0.001) eqParts.push(`contrast=${contrast.toFixed(3)}`);
+  if (eqParts.length > 0) {
+    filters.push(`eq=${eqParts.join(":")}`);
   }
 
-  // Brightness
-  if (video.brightness > 0) {
-    const bright = (video.brightness - 50) * 0.002;
-    filters.push(`eq=brightness=${bright.toFixed(3)}`);
+  // Noise — very light
+  const noiseStrength = Math.round(rand(1, 4) * scale);
+  if (noiseStrength > 0 && settings.video.noise > 0) {
+    filters.push(`noise=alls=${noiseStrength}:allf=t`);
   }
 
-  // Contrast
-  if (video.contrast > 0) {
-    const contrast = 1 + (video.contrast - 50) * 0.004;
-    filters.push(`eq=contrast=${contrast.toFixed(3)}`);
-  }
-
-  // Noise
-  if (video.noise > 0) {
-    const strength = Math.round(video.noise * 0.3);
-    if (strength > 0) {
-      filters.push(`noise=alls=${strength}:allf=t`);
-    }
-  }
-
-  // Blur
-  if (video.blur > 0) {
-    const sigma = video.blur * 0.15;
-    if (sigma > 0.5) {
-      filters.push(`gblur=sigma=${sigma.toFixed(2)}`);
-    }
-  }
-
-  // Motion speed variation
-  if (video.motion > 0) {
-    const pts = 1 + (video.motion - 50) * 0.003;
-    filters.push(`setpts=${(1 / pts).toFixed(4)}*PTS`);
+  // Resolution variation — MERGED here instead of separate -vf flag
+  if (reencoding.enabled && reencoding.resolutionOffset > 0) {
+    const offset = reencoding.resolutionOffset + Math.floor(rand(0, 5));
+    // Use expressions so it works with any input size, ensure even dimensions
+    filters.push(`scale=iw-${offset}:ih-${offset}`);
+    filters.push(`pad=ceil(iw/2)*2:ceil(ih/2)*2`);
   }
 
   return filters;
-}
-
-function getOutputExtension(config: ReencodingConfig): string {
-  return `.${config.outputFormat}`;
 }
 
 function getCodecArgs(config: ReencodingConfig): string[] {
   const args: string[] = [];
   switch (config.codec) {
     case "h264":
-      args.push("-c:v", "libx264", "-preset", "fast");
+      args.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
       break;
     case "h265":
-      args.push("-c:v", "libx265", "-preset", "fast");
+      args.push("-c:v", "libx265", "-preset", "fast", "-crf", "28");
       break;
     case "vp9":
-      args.push("-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "30");
+      args.push("-c:v", "libvpx-vp9", "-b:v", "1M", "-crf", "30");
       break;
     case "av1":
-      // FFmpeg.wasm may not support av1, fallback to h264
-      args.push("-c:v", "libx264", "-preset", "fast");
+      // FFmpeg.wasm doesn't support AV1, fallback to h264
+      args.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
       break;
   }
   return args;
@@ -144,37 +124,6 @@ export interface ProcessResult {
   variationIndex: number;
 }
 
-/** Generate a random float in [min, max] */
-function rand(min: number, max: number): number {
-  return min + Math.random() * (max - min);
-}
-
-/** Create a unique randomized parameter set per variation, based on intensity */
-function randomizeParams(settings: CloakSettings) {
-  // Scale factor by intensity: light = subtle, strong = aggressive
-  const scale = settings.intensity === "light" ? 0.4 : settings.intensity === "medium" ? 1.0 : 1.8;
-
-  return {
-    audio: {
-      pitch: rand(3, 20) * scale,
-      speed: rand(2, 12) * scale,
-      volume: rand(2, 10) * scale,
-      stereo: rand(3, 15) * scale,
-      fingerprint: settings.audio.fingerprint,
-    },
-    video: {
-      color: rand(3, 16) * scale,
-      brightness: rand(2, 12) * scale,
-      contrast: rand(2, 14) * scale,
-      noise: rand(1, 8) * scale,
-      blur: rand(0.5, 5) * scale,
-      motion: rand(1, 8) * scale,
-      metadata: settings.video.metadata,
-      faceDistortion: settings.video.faceDistortion,
-    },
-  };
-}
-
 export async function processFile(
   file: File,
   settings: CloakSettings,
@@ -184,17 +133,16 @@ export async function processFile(
 ): Promise<ProcessResult> {
   const ff = await loadFFmpeg(onProgress);
 
-  const inputName = `input_${Date.now()}`;
+  const ts = Date.now();
   const isVideo = file.type.startsWith("video");
   const inputExt = file.name.substring(file.name.lastIndexOf("."));
-  const inputFile = `${inputName}${inputExt}`;
+  const inputFile = `input_${ts}${inputExt}`;
 
-  // Each variation gets its own unique randomized parameters
-  const varParams = randomizeParams(settings);
+  const scale = settings.intensity === "light" ? 0.5 : settings.intensity === "medium" ? 1.0 : 1.8;
 
-  const outputExt = reencoding.enabled ? getOutputExtension(reencoding) : inputExt;
+  const outputExt = reencoding.enabled ? `.${reencoding.outputFormat}` : inputExt;
   const baseName = file.name.substring(0, file.name.lastIndexOf("."));
-  const outputFile = `output_${Date.now()}_v${variationIndex}${outputExt}`;
+  const outputFile = `output_${ts}_v${variationIndex}${outputExt}`;
 
   onProgress?.(5, "Carregando arquivo...");
   const fileData = await fetchFile(file);
@@ -203,67 +151,66 @@ export async function processFile(
   // Build FFmpeg command
   const args: string[] = ["-i", inputFile];
 
-  // Audio filters with unique random values
-  const audioFilters = buildAudioFilters(varParams.audio);
-
-  // Video filters with unique random values
-  const videoFilters = isVideo ? buildVideoFilters(varParams.video) : [];
-
-  // Apply audio filters
+  // Audio filters
+  const audioFilters = buildAudioFilters(settings, scale);
   if (audioFilters.length > 0) {
     args.push("-af", audioFilters.join(","));
   }
 
-  // Apply video filters
-  if (videoFilters.length > 0) {
-    args.push("-vf", videoFilters.join(","));
+  // Video filters — ALL in one -vf flag (including resolution)
+  if (isVideo) {
+    const videoFilters = buildVideoFilters(settings, scale, reencoding);
+    if (videoFilters.length > 0) {
+      args.push("-vf", videoFilters.join(","));
+    }
   }
 
-  // Reencoding settings
+  // Codec / reencoding
   if (reencoding.enabled) {
-    args.push(...getCodecArgs(reencoding));
-    args.push("-c:a", "aac");
-
-    // Resolution variation
-    if (reencoding.resolutionOffset > 0) {
-      const offset = reencoding.resolutionOffset + Math.floor(rand(0, 5));
-      args.push("-vf", `scale=iw-${offset}:ih-${offset}`);
+    if (isVideo) {
+      args.push(...getCodecArgs(reencoding));
     }
+    args.push("-c:a", "aac", "-b:a", "128k");
 
     // FPS variation
     if (reencoding.fpsOffset > 0) {
       const fpsAdjust = reencoding.fpsOffset + rand(0, 2);
-      args.push("-r", `${30 - fpsAdjust}`);
+      args.push("-r", `${Math.round(30 - fpsAdjust)}`);
     }
   } else {
-    // Copy codecs if no reencoding
-    if (videoFilters.length === 0 && audioFilters.length === 0) {
+    // If no filters applied, copy streams
+    if (audioFilters.length === 0 && (!isVideo || settings.video.noise === 0)) {
       args.push("-c", "copy");
     }
   }
 
-  // Strip metadata
+  // Strip metadata — creates unique file hash
   if (reencoding.stripMetadata || settings.video.metadata) {
     args.push("-map_metadata", "-1");
     args.push("-fflags", "+bitexact");
   }
 
-  // Audio fingerprint: add imperceptible noise
-  if (settings.audio.fingerprint) {
-    // Already handled via slight variations in audio filters
+  // Movflags for proper MP4
+  if (outputExt === ".mp4" || outputExt === ".mov") {
+    args.push("-movflags", "+faststart");
   }
 
   args.push("-y", outputFile);
 
   onProgress?.(15, "Aplicando camuflagem...");
+  console.log("[FFmpeg] args:", args.join(" "));
 
   try {
     await ff.exec(args);
   } catch (err) {
     console.error("[FFmpeg] Processing error:", err);
-    // Try simpler command as fallback
-    const simpleArgs = ["-i", inputFile, "-map_metadata", "-1", "-y", outputFile];
-    await ff.exec(simpleArgs);
+    // Fallback: simple re-encode
+    const fallbackArgs = ["-i", inputFile];
+    if (isVideo) {
+      fallbackArgs.push("-c:v", "libx264", "-preset", "fast", "-crf", "23");
+    }
+    fallbackArgs.push("-c:a", "aac", "-b:a", "128k", "-map_metadata", "-1", "-y", outputFile);
+    await ff.exec(fallbackArgs);
   }
 
   onProgress?.(90, "Finalizando...");
@@ -273,8 +220,20 @@ export async function processFile(
     ? `video/${reencoding.enabled ? reencoding.outputFormat : "mp4"}`
     : `audio/${reencoding.enabled ? "aac" : "mpeg"}`;
 
-  const uint8 = outputData instanceof Uint8Array ? outputData : new TextEncoder().encode(outputData as string);
-  const blob = new Blob([new Uint8Array(uint8)], { type: mimeType });
+  let uint8 = outputData instanceof Uint8Array ? outputData : new TextEncoder().encode(outputData as string);
+
+  // Randomize file size: append random padding bytes to change the file hash
+  if (reencoding.randomizeFileSize) {
+    const paddingSize = Math.floor(rand(64, 512));
+    const padding = new Uint8Array(paddingSize);
+    crypto.getRandomValues(padding);
+    const combined = new Uint8Array(uint8.length + paddingSize);
+    combined.set(uint8);
+    combined.set(padding, uint8.length);
+    uint8 = combined;
+  }
+
+  const blob = new Blob([uint8.buffer as ArrayBuffer], { type: mimeType });
 
   // Cleanup
   await ff.deleteFile(inputFile).catch(() => {});
