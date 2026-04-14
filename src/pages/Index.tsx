@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import UploadZone, { type UploadedFile } from "@/components/UploadZone";
 import CloakingSettings, { type CloakSettings } from "@/components/CloakingSettings";
@@ -40,6 +40,13 @@ const Index = () => {
   const [reencoding, setReencoding] = useState<ReencodingConfig>(defaultReencoding);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Stats state
+  const [statsFilesProcessed, setStatsFilesProcessed] = useState(0);
+  const [statsFilesCloaked, setStatsFilesCloaked] = useState(0);
+  const [statsVariations, setStatsVariations] = useState(0);
+  const [statsAvgTime, setStatsAvgTime] = useState<number | null>(null);
+  const processingTimesRef = useRef<number[]>([]);
+
   const startProcessing = useCallback(async () => {
     if (files.length === 0 || isProcessing) return;
     setIsProcessing(true);
@@ -54,18 +61,21 @@ const Index = () => {
     setProcessing(items);
     setActiveTab("processing");
 
+    // Load FFmpeg first with progress on the first item
     try {
       await loadFFmpeg((progress, message) => {
         if (progress < 100) {
           setProcessing((prev) =>
             prev.map((item, i) =>
-              i === 0 ? { ...item, status: "processing", progress: Math.round(progress * 0.1), message } : item
+              i === 0
+                ? { ...item, status: "processing", progress: Math.round(progress * 0.1), message }
+                : item
             )
           );
         }
       });
     } catch (err) {
-      toast.error("Erro ao carregar FFmpeg. Tente novamente.");
+      toast.error("Erro ao carregar FFmpeg. Use Chrome ou Firefox e verifique sua conexão.");
       setIsProcessing(false);
       return;
     }
@@ -75,10 +85,13 @@ const Index = () => {
     for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
       const file = files[fileIdx];
       const results: Array<{ blob: Blob; filename: string }> = [];
+      const startTime = Date.now();
 
       setProcessing((prev) =>
         prev.map((item, i) =>
-          i === fileIdx ? { ...item, status: "processing", progress: 0, message: "Iniciando..." } : item
+          i === fileIdx
+            ? { ...item, status: "processing", progress: 0, message: "Iniciando..." }
+            : item
         )
       );
 
@@ -90,11 +103,17 @@ const Index = () => {
             reencoding,
             v,
             (progress, message) => {
-              const overallProgress = Math.round(((v + progress / 100) / settings.variations) * 100);
+              const overallProgress = Math.round(
+                ((v + progress / 100) / settings.variations) * 100
+              );
               setProcessing((prev) =>
                 prev.map((item, i) =>
                   i === fileIdx
-                    ? { ...item, progress: overallProgress, message: `Variação ${v + 1}/${settings.variations}: ${message}` }
+                    ? {
+                        ...item,
+                        progress: overallProgress,
+                        message: `Variação ${v + 1}/${settings.variations}: ${message}`,
+                      }
                     : item
                 )
               );
@@ -105,17 +124,35 @@ const Index = () => {
           results.push({ blob: result.blob, filename: result.filename });
         }
 
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        processingTimesRef.current.push(elapsed);
+        const avgTime = Math.round(
+          processingTimesRef.current.reduce((a, b) => a + b, 0) /
+            processingTimesRef.current.length
+        );
+
         setProcessing((prev) =>
           prev.map((item, i) =>
-            i === fileIdx ? { ...item, status: "done", progress: 100, message: undefined, results } : item
+            i === fileIdx
+              ? { ...item, status: "done", progress: 100, message: undefined, results }
+              : item
           )
         );
+
+        // Update stats
+        setStatsFilesProcessed((p) => p + 1);
+        setStatsFilesCloaked((p) => p + 1);
+        setStatsVariations((p) => p + settings.variations);
+        setStatsAvgTime(avgTime);
+
         toast.success(`${file.name} — ${settings.variations} variações geradas!`);
       } catch (err) {
         console.error("Processing error:", err);
         setProcessing((prev) =>
           prev.map((item, i) =>
-            i === fileIdx ? { ...item, status: "error", message: "Erro no processamento" } : item
+            i === fileIdx
+              ? { ...item, status: "error", message: "Erro no processamento" }
+              : item
           )
         );
         toast.error(`Erro ao processar ${file.name}`);
@@ -135,7 +172,9 @@ const Index = () => {
         <header className="h-16 border-b border-border flex items-center justify-between px-6 shrink-0">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-semibold text-foreground">CloakShield</h1>
-            <span className="text-xs font-mono text-muted-foreground bg-surface px-2 py-0.5 rounded">v1.0</span>
+            <span className="text-xs font-mono text-muted-foreground bg-surface px-2 py-0.5 rounded">
+              v1.0
+            </span>
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -144,10 +183,19 @@ const Index = () => {
         </header>
 
         <div className="flex-1 overflow-auto p-6 space-y-6">
-          <StatsBar />
+          <StatsBar
+            filesProcessed={statsFilesProcessed}
+            filesCloaked={statsFilesCloaked}
+            variationsGenerated={statsVariations}
+            avgTime={statsAvgTime}
+          />
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-            <div className={showSettingsPanel ? "lg:col-span-3 space-y-4" : "lg:col-span-5 space-y-4"}>
+            <div
+              className={
+                showSettingsPanel ? "lg:col-span-3 space-y-4" : "lg:col-span-5 space-y-4"
+              }
+            >
               {activeTab === "upload" && (
                 <>
                   <div className="flex items-center gap-2 mb-2">
@@ -157,7 +205,9 @@ const Index = () => {
                   <UploadZone files={files} onFilesChange={setFiles} onProcess={startProcessing} />
                 </>
               )}
-              {activeTab === "processing" && <ProcessingView items={processing} />}
+              {activeTab === "processing" && (
+                <ProcessingView items={processing} isProcessing={isProcessing} />
+              )}
               {activeTab === "projects" && (
                 <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
                   <p className="text-sm">Seus projetos aparecerão aqui</p>
