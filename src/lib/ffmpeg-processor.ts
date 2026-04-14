@@ -276,6 +276,7 @@ export async function processFile(
   // Cleanup
   await ff.deleteFile(inputFile).catch(() => {});
   await ff.deleteFile(outputFile).catch(() => {});
+  if (useCover) await ff.deleteFile(coverFile).catch(() => {});
 
   const resultFilename = `${baseName}_cloaked_v${variationIndex + 1}${outputExt}`;
 
