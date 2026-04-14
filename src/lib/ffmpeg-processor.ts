@@ -233,7 +233,7 @@ export async function processFile(
     uint8 = combined;
   }
 
-  const blob = new Blob([uint8], { type: mimeType });
+  const blob = new Blob([uint8.buffer as ArrayBuffer], { type: mimeType });
 
   // Cleanup
   await ff.deleteFile(inputFile).catch(() => {});
