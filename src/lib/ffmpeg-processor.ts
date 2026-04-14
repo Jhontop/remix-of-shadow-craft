@@ -21,17 +21,33 @@ export async function loadFFmpeg(onProgress?: ProgressCallback) {
     onProgress?.(Math.round(progress * 100), "Processando...");
   });
 
-  onProgress?.(0, "Carregando FFmpeg...");
+  onProgress?.(0, "Baixando FFmpeg...");
 
-  const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-  });
+  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm";
 
-  loaded = true;
-  onProgress?.(100, "FFmpeg carregado!");
-  return ffmpeg;
+  try {
+    onProgress?.(5, "Baixando ffmpeg-core.js...");
+    const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript", true, (p) => {
+      onProgress?.(5 + Math.round(p.received / (p.total || 1) * 20), "Baixando ffmpeg-core.js...");
+    });
+
+    onProgress?.(30, "Baixando ffmpeg-core.wasm (~30MB)...");
+    const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm", true, (p) => {
+      const pct = p.total ? Math.round(p.received / p.total * 60) : 0;
+      onProgress?.(30 + pct, `Baixando WASM... ${Math.round(p.received / 1024 / 1024)}MB`);
+    });
+
+    onProgress?.(92, "Inicializando FFmpeg...");
+    await ffmpeg.load({ coreURL, wasmURL });
+
+    loaded = true;
+    onProgress?.(100, "FFmpeg carregado!");
+    return ffmpeg;
+  } catch (err) {
+    console.error("[FFmpeg] Load error:", err);
+    ffmpeg = null;
+    throw new Error("Falha ao carregar FFmpeg. Verifique sua conexão.");
+  }
 }
 
 /** Generate a random float in [min, max] */
