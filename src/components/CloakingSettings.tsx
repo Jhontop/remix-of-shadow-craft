@@ -13,17 +13,13 @@ export interface CloakSettings {
     speed: number;
     volume: number;
     stereo: number;
-    fingerprint: boolean;
   };
   video: {
     color: number;
     brightness: number;
     contrast: number;
     noise: number;
-    blur: number;
-    motion: number;
     metadata: boolean;
-    faceDistortion: boolean;
   };
   variations: number;
 }
@@ -41,21 +37,21 @@ const intensityColors = {
 
 const intensityPresets: Record<CloakSettings["intensity"], Omit<CloakSettings, "intensity" | "variations">> = {
   light: {
-    audio: { pitch: 5, speed: 3, volume: 4, stereo: 5, fingerprint: true },
-    video: { color: 4, brightness: 3, contrast: 4, noise: 2, blur: 1, motion: 2, metadata: true, faceDistortion: false },
+    audio: { pitch: 5, speed: 3, volume: 4, stereo: 5 },
+    video: { color: 4, brightness: 3, contrast: 4, noise: 2, metadata: true },
   },
   medium: {
-    audio: { pitch: 12, speed: 8, volume: 7, stereo: 10, fingerprint: true },
-    video: { color: 10, brightness: 7, contrast: 8, noise: 5, blur: 3, motion: 5, metadata: true, faceDistortion: false },
+    audio: { pitch: 12, speed: 8, volume: 7, stereo: 10 },
+    video: { color: 10, brightness: 7, contrast: 8, noise: 5, metadata: true },
   },
   strong: {
-    audio: { pitch: 22, speed: 15, volume: 12, stereo: 18, fingerprint: true },
-    video: { color: 18, brightness: 14, contrast: 16, noise: 10, blur: 6, motion: 10, metadata: true, faceDistortion: true },
+    audio: { pitch: 22, speed: 15, volume: 12, stereo: 18 },
+    video: { color: 18, brightness: 14, contrast: 16, noise: 10, metadata: true },
   },
 };
 
 const CloakingSettings = ({ settings, onChange }: CloakingSettingsProps) => {
-  const updateAudio = (key: keyof CloakSettings["audio"], value: number | boolean) => {
+  const updateAudio = (key: keyof CloakSettings["audio"], value: number) => {
     onChange({ ...settings, audio: { ...settings.audio, [key]: value } });
   };
 
@@ -117,12 +113,6 @@ const CloakingSettings = ({ settings, onChange }: CloakingSettingsProps) => {
               <SliderControl label="Velocidade" value={settings.audio.speed} onChange={(v) => updateAudio("speed", v)} />
               <SliderControl label="Volume" value={settings.audio.volume} onChange={(v) => updateAudio("volume", v)} />
               <SliderControl label="Estéreo" value={settings.audio.stereo} onChange={(v) => updateAudio("stereo", v)} />
-              <ToggleControl
-                label="Fingerprint de Áudio"
-                description="Gera hash único para evitar detecção"
-                checked={settings.audio.fingerprint}
-                onChange={(v) => updateAudio("fingerprint", v)}
-              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -134,8 +124,6 @@ const CloakingSettings = ({ settings, onChange }: CloakingSettingsProps) => {
               <SliderControl label="Brilho" value={settings.video.brightness} onChange={(v) => updateVideo("brightness", v)} />
               <SliderControl label="Contraste" value={settings.video.contrast} onChange={(v) => updateVideo("contrast", v)} />
               <SliderControl label="Ruído Visual" value={settings.video.noise} onChange={(v) => updateVideo("noise", v)} />
-              <SliderControl label="Desfoque" value={settings.video.blur} onChange={(v) => updateVideo("blur", v)} />
-              <SliderControl label="Velocidade Movimento" value={settings.video.motion} onChange={(v) => updateVideo("motion", v)} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -148,12 +136,6 @@ const CloakingSettings = ({ settings, onChange }: CloakingSettingsProps) => {
                 description="Remove EXIF, codec info, e dados identificáveis"
                 checked={settings.video.metadata}
                 onChange={(v) => updateVideo("metadata", v)}
-              />
-              <ToggleControl
-                label="Distorção de Rostos"
-                description="Aplica modificações sutis em rostos detectados"
-                checked={settings.video.faceDistortion}
-                onChange={(v) => updateVideo("faceDistortion", v)}
               />
               <div className="space-y-2">
                 <div className="flex items-center justify-between">

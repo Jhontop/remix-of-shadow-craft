@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import Sidebar from "@/components/Sidebar";
 import UploadZone, { type UploadedFile } from "@/components/UploadZone";
 import CloakingSettings, { type CloakSettings } from "@/components/CloakingSettings";
-import CoverUpload, { type CoverImage } from "@/components/CoverUpload";
 import ReencodingSettings, { type ReencodingConfig } from "@/components/ReencodingSettings";
 import ProcessingView, { type ProcessingItem } from "@/components/ProcessingView";
 import StatsBar from "@/components/StatsBar";
@@ -12,8 +11,8 @@ import { toast } from "sonner";
 
 const defaultSettings: CloakSettings = {
   intensity: "medium",
-  audio: { pitch: 12, speed: 8, volume: 7, stereo: 10, fingerprint: true },
-  video: { color: 10, brightness: 7, contrast: 8, noise: 5, blur: 3, motion: 5, metadata: true, faceDistortion: false },
+  audio: { pitch: 12, speed: 8, volume: 7, stereo: 10 },
+  video: { color: 10, brightness: 7, contrast: 8, noise: 5, metadata: true },
   variations: 3,
 };
 
@@ -34,8 +33,6 @@ const Index = () => {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [settings, setSettings] = useState<CloakSettings>(defaultSettings);
   const [processing, setProcessing] = useState<ProcessingItem[]>([]);
-  const [cover, setCover] = useState<CoverImage | null>(null);
-  const [coverEnabled, setCoverEnabled] = useState(false);
   const [reencoding, setReencoding] = useState<ReencodingConfig>(defaultReencoding);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -178,12 +175,6 @@ const Index = () => {
                   <h2 className="text-lg font-semibold text-foreground">Configurações</h2>
                 </div>
                 <CloakingSettings settings={settings} onChange={setSettings} />
-                <CoverUpload
-                  cover={cover}
-                  onCoverChange={setCover}
-                  enabled={coverEnabled}
-                  onEnabledChange={setCoverEnabled}
-                />
                 <ReencodingSettings config={reencoding} onChange={setReencoding} />
               </div>
             )}
