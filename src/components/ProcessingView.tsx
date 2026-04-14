@@ -40,6 +40,16 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
   const completed = items.filter((i) => i.status === "done").length;
   const total = items.length;
 
+  const allResults = items.flatMap((item) =>
+    item.status === "done" && item.results ? item.results : []
+  );
+
+  const handleDownloadAll = () => {
+    allResults.forEach((r, i) => {
+      setTimeout(() => downloadBlob(r.blob, r.filename), i * 300);
+    });
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -49,9 +59,22 @@ const ProcessingView = ({ items }: ProcessingViewProps) => {
             {completed}/{total} concluído{completed !== 1 ? "s" : ""}
           </p>
         </div>
-        <Badge variant="outline" className="border-border text-muted-foreground font-mono">
-          {Math.round((completed / total) * 100)}%
-        </Badge>
+        <div className="flex items-center gap-2">
+          {allResults.length > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs border-border text-foreground"
+              onClick={handleDownloadAll}
+            >
+              <Download className="w-3.5 h-3.5" />
+              Baixar Todos ({allResults.length})
+            </Button>
+          )}
+          <Badge variant="outline" className="border-border text-muted-foreground font-mono">
+            {Math.round((completed / total) * 100)}%
+          </Badge>
+        </div>
       </div>
 
       <Progress value={(completed / total) * 100} className="h-1.5 bg-surface" />
